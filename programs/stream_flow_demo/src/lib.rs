@@ -10,33 +10,48 @@ declare_id!("HDnWpNXm6nqJ3m3cZeQdaTWvMkCAXSkHLFN95CxaWz1S");
 #[program]
 pub mod stream_flow_demo {
 
+    use anchor_spl::token_interface;
+
     use super::*;
 
-    pub fn deposit(ctx: Context<Deposit>, args: DepositIxArgs) -> Result<()> {
-        msg!("deposit action: {:?}", ctx.program_id);
-        // let transfer_ctx = ctx.accounts.to_transfer_ctx();
-        // token_interface::transfer_checked(
-        //     transfer_ctx,
-        //     args.net_amount_deposited + 50_000_000_000,
-        //     9,
-        // )?;
+    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        let transfer_ctx = ctx.accounts.to_transfer_ctx();
+        token_interface::transfer_checked(transfer_ctx, amount, 9)?;
+        ctx.accounts.sender_deposit_account.amount = amount;
+        Ok(())
+    }
 
-        let x = ctx.accounts.sender.key();
+    pub fn create_sf(ctx: Context<CreateSf>, args: CreateSfIxArgs) -> Result<()> {
+        msg!("deposit action: {:?}", ctx.program_id);
+        let depositor_pubkey = ctx.accounts.depositor.key();
         let seeds = &[
             b"user_account",
-            x.as_ref(),
-            &[ctx.bumps.sender_deposit_account],
+            depositor_pubkey.as_ref(),
+            &[ctx.bumps.depositor_account],
         ];
-        let d = &[seeds.as_ref()];
-        let sf_ctx = ctx.accounts.to_sf_create_ctx().with_signer(d);
+        let signer_seends = &[seeds.as_ref()];
+        let amount = ctx.accounts.depositor_account.amount;
+
+        let transfer_ctx = ctx.accounts.to_transfer_ctx().with_signer(signer_seends);
+        msg!(
+            "=============> tansfer {} token to sender tokens {} ...",
+            amount,
+            ctx.accounts.sender_tokens.key()
+        );
+        token_interface::transfer_checked(transfer_ctx, amount, 9)?;
+
+        let sf_ctx = ctx.accounts.to_sf_create_ctx();
+        msg!("=============> start to invoke stream flow ...");
+        // NOTE: related withdrawor address, if not find in fee oracle, 0.99% used
+        let amount = amount * (10000 - 99) / 10000;
         streamflow_sdk::cpi::create(
             sf_ctx,
             args.start_time,
-            args.net_amount_deposited,
-            args.period,
-            args.amount_per_period,
-            args.cliff,
-            args.cliff_amount,
+            amount,
+            1,
+            amount,
+            0,
+            amount,
             args.cancelable_by_sender,
             args.cancelable_by_recipient,
             args.automatic_withdrawal,
@@ -80,6 +95,63 @@ pub struct Deposit<'info> {
         associated_token::token_program = token_program,
     )]
     pub sender_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub mint: InterfaceAccount<'info, Mint>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> Deposit<'info> {
+    pub fn to_transfer_ctx(&self) -> CpiContext<'_, '_, '_, 'info, TransferChecked<'info>> {
+        let cpi_accounts = TransferChecked {
+            mint: self.mint.to_account_info(),
+            authority: self.sender.to_account_info(),
+            from: self.sender_tokens.to_account_info(),
+            to: self.sender_vault.to_account_info(),
+        };
+
+        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+    }
+}
+
+#[derive(Accounts)]
+pub struct CreateSf<'info> {
+    #[account(mut)]
+    pub sender: Signer<'info>,
+    /// Associated token account address of `sender`.
+    #[account(
+        init_if_needed,
+        payer = sender,
+        associated_token::mint = mint,
+        associated_token::authority = sender,
+        associated_token::token_program = token_program,
+    )]
+    pub sender_tokens: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(mut)]
+    /// CHECK: depositor
+    pub depositor: UncheckedAccount<'info>,
+    #[account(
+        init_if_needed,
+        payer = sender,
+        associated_token::mint = mint,
+        associated_token::authority = depositor,
+        associated_token::token_program = token_program,
+    )]
+    pub depositor_tokens: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(
+        mut,
+        seeds=[b"user_account", depositor.key().as_ref()],
+        bump,
+    )]
+    pub depositor_account: Box<Account<'info, UserDepositAccount>>,
+    #[account(
+        mut,
+        associated_token::mint = mint,
+        associated_token::authority = depositor_account,
+        associated_token::token_program = token_program,
+    )]
+    pub depositor_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut)]
     pub metadata: Signer<'info>,
     /// The escrow account holding the funds.
@@ -105,7 +177,7 @@ pub struct Deposit<'info> {
         associated_token::mint = mint,
         associated_token::authority = streamflow_treasury,
     )]
-    pub streamflow_treasury_tokens: InterfaceAccount<'info, TokenAccount>,
+    pub streamflow_treasury_tokens: Box<InterfaceAccount<'info, TokenAccount>>,
     /// Delegate account for automatically withdrawing contracts.
     /// Use constant `streamflow_sdk::state::WITHDRAWOR_ADDRESS`
     #[account(mut)]
@@ -124,7 +196,7 @@ pub struct Deposit<'info> {
         associated_token::mint = mint,
         associated_token::authority = partner,
     )]
-    pub partner_tokens: InterfaceAccount<'info, TokenAccount>,
+    pub partner_tokens: Box<InterfaceAccount<'info, TokenAccount>>,
     /// The SPL token mint account.
     pub mint: InterfaceAccount<'info, Mint>,
     /// Internal program that handles fees for specified partners. If no partner fees are expected
@@ -144,13 +216,13 @@ pub struct Deposit<'info> {
     pub system_program: Program<'info, System>,
 }
 
-impl<'info> Deposit<'info> {
+impl<'info> CreateSf<'info> {
     pub fn to_transfer_ctx(&self) -> CpiContext<'_, '_, '_, 'info, TransferChecked<'info>> {
         let cpi_accounts = TransferChecked {
             mint: self.mint.to_account_info(),
-            authority: self.sender.to_account_info(),
-            from: self.sender_tokens.to_account_info(),
-            to: self.sender_vault.to_account_info(),
+            authority: self.depositor_account.to_account_info(),
+            from: self.depositor_vault.to_account_info(),
+            to: self.sender_tokens.to_account_info(),
         };
 
         CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
@@ -162,8 +234,8 @@ impl<'info> Deposit<'info> {
         let accounts = streamflow_sdk::cpi::accounts::Create {
             sender: self.sender.to_account_info(),
             sender_tokens: self.sender_tokens.to_account_info(),
-            recipient: self.sender_deposit_account.to_account_info(),
-            recipient_tokens: self.sender_vault.to_account_info(),
+            recipient: self.depositor.to_account_info(),
+            recipient_tokens: self.depositor_tokens.to_account_info(),
             metadata: self.metadata.to_account_info(),
             escrow_tokens: self.escrow_tokens.to_account_info(),
             streamflow_treasury: self.streamflow_treasury.to_account_info(),
@@ -184,13 +256,8 @@ impl<'info> Deposit<'info> {
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy)]
-pub struct DepositIxArgs {
+pub struct CreateSfIxArgs {
     pub start_time: u64,
-    pub net_amount_deposited: u64,
-    pub period: u64,
-    pub amount_per_period: u64,
-    pub cliff: u64,
-    pub cliff_amount: u64,
     pub cancelable_by_sender: bool,
     pub cancelable_by_recipient: bool,
     pub automatic_withdrawal: bool,
@@ -205,4 +272,6 @@ pub struct DepositIxArgs {
 
 #[account]
 #[derive(InitSpace)]
-pub struct UserDepositAccount {}
+pub struct UserDepositAccount {
+    pub amount: u64,
+}
