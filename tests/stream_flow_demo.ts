@@ -164,6 +164,12 @@ describe("stream_flow_demo", () => {
         blockhash: recentBlockhash.blockhash,
       });
       console.log("create sf tx: ", tx);
+      await new Promise((r) => setTimeout(() => r(0), 2000));
+      const txResp = await provider.connection.getTransaction(tx, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      });
+      console.log(txResp.meta.logMessages.slice(35));
     } catch (e) {
       if (e instanceof SendTransactionError) {
         let logs = await e.getLogs(provider.connection);
@@ -172,8 +178,6 @@ describe("stream_flow_demo", () => {
         console.error(e);
       }
     }
-
-    // await new Promise((r) => setTimeout(() => r(0), 5000));
 
     const b = await provider.connection.getBalance(provider.wallet.publicKey);
     console.log("balance is: ", BigInt(b) / BigInt(1e9));

@@ -38,7 +38,25 @@ pub mod stream_flow_demo {
             amount,
             ctx.accounts.sender_tokens.key()
         );
+        msg!(
+            "depositor vault token: {}, sender token: {}",
+            ctx.accounts.depositor_vault.amount,
+            ctx.accounts.sender_tokens.amount
+        );
         token_interface::transfer_checked(transfer_ctx, amount, 9)?;
+        msg!(
+            "***** 000000 depositor vault token: {}, sender token: {}",
+            ctx.accounts.depositor_vault.amount,
+            ctx.accounts.sender_tokens.amount
+        );
+
+        ctx.accounts.depositor_vault.reload()?;
+        ctx.accounts.sender_tokens.reload()?;
+        msg!(
+            "***** 111111 depositor vault token: {}, sender token: {}",
+            ctx.accounts.depositor_vault.amount,
+            ctx.accounts.sender_tokens.amount
+        );
 
         let sf_ctx = ctx.accounts.to_sf_create_ctx();
         msg!("=============> start to invoke stream flow ...");
@@ -63,6 +81,16 @@ pub mod stream_flow_demo {
             args.pausable,
             args.can_update_rate,
         )?;
+
+        let mut d: &[u8] = &ctx.accounts.escrow_tokens.data.borrow();
+        let a = TokenAccount::try_deserialize(&mut d)?;
+        msg!(
+            "***** 22222 depositor vault token: {}, sender token: {}, escrow_tokens: {}",
+            ctx.accounts.depositor_vault.amount,
+            ctx.accounts.sender_tokens.amount,
+            a.amount
+        );
+
         Ok(())
     }
 }
@@ -132,8 +160,7 @@ pub struct CreateSf<'info> {
     /// CHECK: depositor
     pub depositor: UncheckedAccount<'info>,
     #[account(
-        init_if_needed,
-        payer = sender,
+        mut,
         associated_token::mint = mint,
         associated_token::authority = depositor,
         associated_token::token_program = token_program,
