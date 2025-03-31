@@ -19,10 +19,16 @@ wallet = "~/.config/solana/id.json"
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 
 [test]
-startup_wait = 5000
-shutdown_wait = 2000
+startup_wait = 10000
+shutdown_wait = 1000
 upgradeable = false
 
+[test.validator]
+url = "https://omniscient-snowy-sunset.solana-mainnet.quiknode.pro/0a052cfd0f79310032149e1a170e49617f4821b0/"
+
 [[test.genesis]]
-address = "HqDGZjaVRXJ9MGRQEw7qDc2rAr6iH1n1kAQdCZaCMfMZ"
-program = "stream_flow_dev.so"
+address = "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m"
+program = "stream_flow_mainnet.so"
+
+[[test.validator.clone]]
+address = "B743wFVk2pCYhV91cn287e1xY7f1vt4gdY48hhNiuQmT"
